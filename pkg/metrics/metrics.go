@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/bradleyfalzon/ghinstallation"
-	"github.com/google/go-github/v38/github"
+	"github.com/google/go-github/v41/github"
+	"github.com/gregjones/httpcache"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/oauth2"
 )
@@ -50,8 +52,11 @@ func InitMetrics() {
 		log.Fatalln("Error: Client creation failed." + err.Error())
 	}
 
-	go workflowCache()
-
+	// trigger an inital run to populate the metrics
+	Cache = NewRepoCache()
+	// preseed the repo cache
+	go cacheRepos(time.Duration(config.Github.RepoRefresh) * time.Second)
+	go workflowCache(time.Duration(config.Github.Refresh)*time.Second, time.Duration(config.Github.WorkflowRefresh)*time.Second)
 	for {
 		if workflows != nil {
 			break
@@ -63,6 +68,7 @@ func InitMetrics() {
 	go getRunnersOrganizationFromGithub()
 	go getWorkflowRunsFromGithub()
 	go getRunnersEnterpriseFromGithub()
+	log.Printf("Metrics initialized")
 }
 
 // NewClient creates a Github Client
@@ -91,6 +97,15 @@ func NewClient() (*github.Client, error) {
 		}
 		httpClient = &http.Client{Transport: tr}
 	}
+
+	// setup caching in the client
+	transport = &httpcache.Transport{
+		Transport:           transport,
+		Cache:               httpcache.NewMemoryCache(),
+		MarkCachedResponses: true,
+	}
+
+	httpClient = &http.Client{Transport: transport}
 
 	if config.Github.APIURL != "api.github.com" {
 		var err error

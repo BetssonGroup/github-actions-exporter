@@ -8,18 +8,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/go-github/v38/github"
+	"github.com/google/go-github/v41/github"
 )
 
 // getFieldValue return value from run element which corresponds to field
-func getFieldValue(repo string, run github.WorkflowRun, field string) string {
+func getFieldValue(repo string, run github.WorkflowRun, job github.WorkflowJob, field string) string {
 	switch field {
 	case "repo":
 		return repo
 	case "id":
 		return strconv.FormatInt(*run.ID, 10)
 	case "node_id":
-		return *run.NodeID
+		return run.GetNodeID()
 	case "head_branch":
 		return *run.HeadBranch
 	case "head_sha":
@@ -34,16 +34,19 @@ func getFieldValue(repo string, run github.WorkflowRun, field string) string {
 		return *run.Event
 	case "status":
 		return *run.Status
+	case "runner":
+		return job.GetRunnerName()
+
 	}
 	return ""
 }
 
 //
-func getRelevantFields(repo string, run *github.WorkflowRun) []string {
+func getRelevantFields(repo string, run *github.WorkflowRun, job *github.WorkflowJob) []string {
 	relevantFields := strings.Split(config.WorkflowFields, ",")
 	result := make([]string, len(relevantFields))
 	for i, field := range relevantFields {
-		result[i] = getFieldValue(repo, *run, field)
+		result[i] = getFieldValue(repo, *run, *job, field)
 	}
 	return result
 }
@@ -51,7 +54,7 @@ func getRelevantFields(repo string, run *github.WorkflowRun) []string {
 // getWorkflowRunsFromGithub - return informations and status about a worflow
 func getWorkflowRunsFromGithub() {
 	for {
-		for _, repo := range config.Github.Repositories.Value() {
+		for repo := range workflows {
 			r := strings.Split(repo, "/")
 			resp, _, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), r[0], r[1], nil)
 			if err != nil {
@@ -69,18 +72,28 @@ func getWorkflowRunsFromGithub() {
 						s = 4
 					}
 
-					fields := getRelevantFields(repo, run)
+					jobs, _, err := client.Actions.ListWorkflowJobs(context.Background(), r[0], r[1], *run.ID, nil)
+					if err != nil {
+						log.Printf("ListWorkflowJobs error for %s: %s", repo, err.Error())
+						jobs = &github.Jobs{}
+					}
 
-					workflowRunStatusGauge.WithLabelValues(fields...).Set(s)
+					for _, job := range jobs.Jobs {
 
-					resp, _, err := client.Actions.GetWorkflowRunUsageByID(context.Background(), r[0], r[1], *run.ID)
-					if err != nil { // Fallback for Github Enterprise
-						created := run.CreatedAt.Time.Unix()
-						updated := run.UpdatedAt.Time.Unix()
-						elapsed := updated - created
-						workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(elapsed * 1000))
-					} else {
-						workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(resp.GetRunDurationMS()))
+						fields := getRelevantFields(repo, run, job)
+
+						workflowRunStatusGauge.WithLabelValues(fields...).Set(s)
+
+						resp, _, err := client.Actions.GetWorkflowRunUsageByID(context.Background(), r[0], r[1], *run.ID)
+						if err != nil { // Fallback for Github Enterprise
+							created := run.CreatedAt.Time.Unix()
+							updated := run.UpdatedAt.Time.Unix()
+							elapsed := updated - created
+							workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(elapsed * 1000))
+						} else {
+							workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(resp.GetRunDurationMS()))
+						}
+
 					}
 				}
 			}

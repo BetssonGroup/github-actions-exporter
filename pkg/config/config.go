@@ -10,14 +10,16 @@ var (
 		AppPrivateKey     string `split_words:"true"`
 		Token             string
 		Refresh           int64
+		RepoRefresh       int64
+		WorkflowRefresh   int64
 		Repositories      cli.StringSlice
 		Organizations     cli.StringSlice
-		APIURL            string			
+		APIURL            string
 	}
-	Port  int
-	Debug bool
-	EnterpriseName    string
-	WorkflowFields    string
+	Port           int
+	Debug          bool
+	EnterpriseName string
+	WorkflowFields string
 )
 
 // InitConfiguration - set configuration from env vars or command parameters
@@ -63,9 +65,25 @@ func InitConfiguration() []cli.Flag {
 			Name:        "github_refresh",
 			Aliases:     []string{"gr"},
 			EnvVars:     []string{"GITHUB_REFRESH"},
-			Value:       30,
+			Value:       120,
 			Usage:       "Refresh time Github Pipelines status in sec",
 			Destination: &Github.Refresh,
+		},
+		&cli.Int64Flag{
+			Name:        "github_repo_refresh",
+			Aliases:     []string{"grr"},
+			EnvVars:     []string{"GITHUB_REPO_REFRESH"},
+			Value:       3600,
+			Usage:       "Refresh time Github Repos status in sec",
+			Destination: &Github.RepoRefresh,
+		},
+		&cli.Int64Flag{
+			Name:        "github_workflow_refresh",
+			Aliases:     []string{"grw"},
+			EnvVars:     []string{"GITHUB_WORKFLOW_REFRESH"},
+			Value:       3600,
+			Usage:       "Refresh time Github Workflows status in sec",
+			Destination: &Github.WorkflowRefresh,
 		},
 		&cli.StringFlag{
 			Name:        "github_api_url",
@@ -106,7 +124,7 @@ func InitConfiguration() []cli.Flag {
 			Name:        "export_fields",
 			EnvVars:     []string{"EXPORT_FIELDS"},
 			Usage:       "A comma separated list of fields for workflow metrics that should be exported",
-			Value:       "repo,id,node_id,head_branch,head_sha,run_number,workflow_id,workflow,event,status",
+			Value:       "repo,id,node_id,head_branch,head_sha,run_number,workflow_id,workflow,event,status,runner",
 			Destination: &WorkflowFields,
 		},
 	}
