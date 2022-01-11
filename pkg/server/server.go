@@ -1,12 +1,12 @@
 package server
 
 import (
-	"log"
 	"strconv"
 
 	"github.com/fasthttp/router"
 	"github.com/urfave/cli/v2"
 	"github.com/valyala/fasthttp"
+	"k8s.io/klog/v2"
 
 	"github-actions-exporter/pkg/config"
 	"github-actions-exporter/pkg/metrics"
@@ -15,7 +15,6 @@ import (
 // RunServer - run http server for expose metrics
 func RunServer(ctx *cli.Context) error {
 	metrics.InitMetrics()
-
 	r := router.New()
 	r.GET("/", func(ctx *fasthttp.RequestCtx) {
 		ctx.WriteString("/metrics")
@@ -29,7 +28,6 @@ func RunServer(ctx *cli.Context) error {
 		r.GET("/debug/pprof/trace", pprofHandlerTrace)
 		r.GET("/debug/pprof/{profile}", pprofHandlerIndex)
 	}
-
-	log.Print("exporter listening on 0.0.0.0:" + strconv.Itoa(config.Port))
+	klog.Infof("exporter listening on 0.0.0.0:" + strconv.Itoa(config.Port))
 	return fasthttp.ListenAndServe(":"+strconv.Itoa(config.Port), r.Handler)
 }

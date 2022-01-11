@@ -1,6 +1,9 @@
 package config
 
-import "github.com/urfave/cli/v2"
+import (
+	"github.com/urfave/cli/v2"
+	"github.com/urfave/cli/v2/altsrc"
+)
 
 var (
 	// Github - github configuration
@@ -25,6 +28,7 @@ var (
 // InitConfiguration - set configuration from env vars or command parameters
 func InitConfiguration() []cli.Flag {
 	return []cli.Flag{
+		altsrc.NewIntFlag(&cli.IntFlag{Name: "loglevel", Aliases: []string{"l"}, Value: 3}),
 		&cli.Int64Flag{
 			Name:        "app_id",
 			Aliases:     []string{"gai"},
@@ -65,8 +69,8 @@ func InitConfiguration() []cli.Flag {
 			Name:        "github_refresh",
 			Aliases:     []string{"gr"},
 			EnvVars:     []string{"GITHUB_REFRESH"},
-			Value:       120,
-			Usage:       "Refresh time Github Pipelines status in sec",
+			Value:       60,
+			Usage:       "Refresh time Github Actions Workflow status in sec",
 			Destination: &Github.Refresh,
 		},
 		&cli.Int64Flag{
@@ -94,18 +98,11 @@ func InitConfiguration() []cli.Flag {
 			Destination: &Github.APIURL,
 		},
 		&cli.StringSliceFlag{
-			Name:        "github_orgas",
-			Aliases:     []string{"go"},
-			EnvVars:     []string{"GITHUB_ORGAS"},
-			Usage:       "List all organizations you want get informations. Format <orga>,<orga2>,<orga3> (like test,test2)",
+			Name:        "github_orgs",
+			Aliases:     []string{"o"},
+			EnvVars:     []string{"GITHUB_ORGS"},
+			Usage:       "List all organizations you want get informations. Format <org1>,<org2>,<org3> (like test,test2)",
 			Destination: &Github.Organizations,
-		},
-		&cli.StringSliceFlag{
-			Name:        "github_repos",
-			Aliases:     []string{"grs"},
-			EnvVars:     []string{"GITHUB_REPOS"},
-			Usage:       "List all repositories you want get informations. Format <orga>/<repo>,<orga>/<repo2>,<orga>/<repo3> (like test/test)",
-			Destination: &Github.Repositories,
 		},
 		&cli.BoolFlag{
 			Name:        "debug_profile",
@@ -114,17 +111,10 @@ func InitConfiguration() []cli.Flag {
 			Destination: &Debug,
 		},
 		&cli.StringFlag{
-			Name:        "enterprise_name",
-			EnvVars:     []string{"ENTERPRISE_NAME"},
-			Usage:       "Enterprise name. Needed for enterprise endpoints (/enterprises/{ENTERPRISE_NAME}/*)",
-			Destination: &EnterpriseName,
-			Value:       "",
-		},
-		&cli.StringFlag{
 			Name:        "export_fields",
 			EnvVars:     []string{"EXPORT_FIELDS"},
 			Usage:       "A comma separated list of fields for workflow metrics that should be exported",
-			Value:       "repo,id,node_id,head_branch,head_sha,run_number,workflow_id,workflow,event,status,runner",
+			Value:       "repo,head_branch,run_number,workflow,event,status,runner_name,job_name,job_status",
 			Destination: &WorkflowFields,
 		},
 	}

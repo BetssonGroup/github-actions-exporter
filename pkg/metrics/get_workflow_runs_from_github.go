@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/go-github/v41/github"
+	"k8s.io/klog/v2"
 )
 
 // getFieldValue return value from run element which corresponds to field
@@ -18,25 +19,22 @@ func getFieldValue(repo string, run github.WorkflowRun, job github.WorkflowJob, 
 		return repo
 	case "id":
 		return strconv.FormatInt(*run.ID, 10)
-	case "node_id":
-		return run.GetNodeID()
 	case "head_branch":
 		return *run.HeadBranch
-	case "head_sha":
-		return *run.HeadSHA
 	case "run_number":
 		return strconv.Itoa(*run.RunNumber)
-	case "workflow_id":
-		return strconv.FormatInt(*run.WorkflowID, 10)
 	case "workflow":
-		return *workflows[repo][*run.WorkflowID].Name
+		return run.GetName()
 	case "event":
 		return *run.Event
 	case "status":
 		return *run.Status
-	case "runner":
+	case "runner_name":
 		return job.GetRunnerName()
-
+	case "job_name":
+		return job.GetName()
+	case "job_status":
+		return *job.Status
 	}
 	return ""
 }
@@ -52,15 +50,24 @@ func getRelevantFields(repo string, run *github.WorkflowRun, job *github.Workflo
 }
 
 // getWorkflowRunsFromGithub - return informations and status about a worflow
-func getWorkflowRunsFromGithub() {
+func getWorkflowRunsFromGithub(cache *InMemCache) {
 	for {
-		for repo := range workflows {
+		for repo := range cache.WorkflowCache.Items() {
 			r := strings.Split(repo, "/")
-			resp, _, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), r[0], r[1], nil)
+			workflowList, resp, err := client.Actions.ListRepositoryWorkflowRuns(context.Background(), r[0], r[1], &github.ListWorkflowRunsOptions{
+				ListOptions: github.ListOptions{
+					Page:    1,
+					PerPage: 100,
+				},
+			})
 			if err != nil {
-				log.Printf("ListRepositoryWorkflowRuns error for %s: %s", repo, err.Error())
+				if _, ok := err.(*github.RateLimitError); ok {
+					klog.Infof("hit rate limit, sleeping until rate limit reset (%s)", resp.Rate.Reset.Format(time.RFC3339))
+					time.Sleep(time.Until(resp.Rate.Reset.Time))
+				}
+				klog.Errorf("ListRepositoryWorkflowRuns error for %s: %s", repo, err.Error())
 			} else {
-				for _, run := range resp.WorkflowRuns {
+				for _, run := range workflowList.WorkflowRuns {
 					var s float64 = 0
 					if run.GetConclusion() == "success" {
 						s = 1
@@ -71,29 +78,40 @@ func getWorkflowRunsFromGithub() {
 					} else if run.GetConclusion() == "queued" {
 						s = 4
 					}
-
-					jobs, _, err := client.Actions.ListWorkflowJobs(context.Background(), r[0], r[1], *run.ID, nil)
-					if err != nil {
-						log.Printf("ListWorkflowJobs error for %s: %s", repo, err.Error())
-						jobs = &github.Jobs{}
-					}
-
-					for _, job := range jobs.Jobs {
-
-						fields := getRelevantFields(repo, run, job)
-
-						workflowRunStatusGauge.WithLabelValues(fields...).Set(s)
-
-						resp, _, err := client.Actions.GetWorkflowRunUsageByID(context.Background(), r[0], r[1], *run.ID)
-						if err != nil { // Fallback for Github Enterprise
-							created := run.CreatedAt.Time.Unix()
-							updated := run.UpdatedAt.Time.Unix()
-							elapsed := updated - created
-							workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(elapsed * 1000))
-						} else {
-							workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(resp.GetRunDurationMS()))
+					// only get runs from the last 24h
+					if run.CreatedAt.Time.After(time.Now().Add(-time.Duration(24) * time.Hour)) {
+						jobs, resp, err := client.Actions.ListWorkflowJobs(context.Background(), r[0], r[1], *run.ID, &github.ListWorkflowJobsOptions{})
+						if err != nil {
+							if _, ok := err.(*github.RateLimitError); ok {
+								klog.Infof("hit rate limit, sleeping until rate limit reset (%s)", resp.Rate.Reset.Format(time.RFC3339))
+								time.Sleep(time.Until(resp.Rate.Reset.Time))
+							}
+							log.Printf("ListWorkflowJobs error for %s: %s", repo, err.Error())
+							continue
 						}
 
+						for _, job := range jobs.Jobs {
+							if jobs.GetTotalCount() > 0 {
+								fields := getRelevantFields(repo, run, job)
+								workflowRunStatusGauge.WithLabelValues(fields...).Set(s)
+								workflowRunStatusStarted.WithLabelValues(fields...).Set(float64(job.StartedAt.Time.Unix()))
+								if job.CompletedAt != nil {
+									workflowRunStatusCompleted.WithLabelValues(fields...).Set(float64(job.CompletedAt.Time.Unix()))
+								}
+								usage, resp, err := client.Actions.GetWorkflowRunUsageByID(context.Background(), r[0], r[1], *run.ID)
+								if err != nil {
+									if _, ok := err.(*github.RateLimitError); ok {
+										klog.Infof("hit rate limit, sleeping until rate limit reset (%s)", resp.Rate.Reset.Format(time.RFC3339))
+										time.Sleep(time.Until(resp.Rate.Reset.Time))
+									}
+									klog.Errorf("GetWorkflowRunUsageByID error for %s: %s", repo, err.Error())
+									continue
+								} else {
+									workflowRunDurationGauge.WithLabelValues(fields...).Set(float64(usage.GetRunDurationMS()))
+
+								}
+							}
+						}
 					}
 				}
 			}

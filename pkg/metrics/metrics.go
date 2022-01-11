@@ -15,17 +15,20 @@ import (
 	"github.com/gregjones/httpcache"
 	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/oauth2"
+	"k8s.io/klog/v2"
 )
 
 var (
-	client                   *github.Client
-	err                      error
-	workflowRunStatusGauge   *prometheus.GaugeVec
-	workflowRunDurationGauge *prometheus.GaugeVec
+	client                     *github.Client
+	err                        error
+	workflowRunStatusGauge     *prometheus.GaugeVec
+	workflowRunDurationGauge   *prometheus.GaugeVec
+	workflowRunStatusStarted   *prometheus.GaugeVec
+	workflowRunStatusCompleted *prometheus.GaugeVec
 )
 
 // InitMetrics - register metrics in prometheus lib and start func for monitor
-func InitMetrics() {
+func InitMetrics() (chan bool, chan bool) {
 	workflowRunStatusGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "github_workflow_run_status",
@@ -40,35 +43,51 @@ func InitMetrics() {
 		},
 		strings.Split(config.WorkflowFields, ","),
 	)
+	workflowRunStatusStarted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_workflow_run_status_started",
+			Help: "Workflow run status started",
+		},
+		strings.Split(config.WorkflowFields, ","),
+	)
+	workflowRunStatusCompleted = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "github_workflow_run_status_completed",
+			Help: "Workflow run status completed",
+		},
+		strings.Split(config.WorkflowFields, ","),
+	)
+
 	prometheus.MustRegister(runnersGauge)
 	prometheus.MustRegister(runnersOrganizationGauge)
 	prometheus.MustRegister(workflowRunStatusGauge)
 	prometheus.MustRegister(workflowRunDurationGauge)
-	prometheus.MustRegister(workflowBillGauge)
-	prometheus.MustRegister(runnersEnterpriseGauge)
+	prometheus.MustRegister(workflowRunStatusStarted)
+	prometheus.MustRegister(workflowRunStatusCompleted)
 
 	client, err = NewClient()
 	if err != nil {
 		log.Fatalln("Error: Client creation failed." + err.Error())
 	}
 
-	// trigger an inital run to populate the metrics
-	Cache = NewRepoCache()
-	// preseed the repo cache
-	go cacheRepos(time.Duration(config.Github.RepoRefresh) * time.Second)
-	go workflowCache(time.Duration(config.Github.Refresh)*time.Second, time.Duration(config.Github.WorkflowRefresh)*time.Second)
-	for {
-		if workflows != nil {
-			break
-		}
+	_, resp, err := client.APIMeta(context.Background())
+	if _, ok := err.(*github.RateLimitError); ok {
+		klog.Errorf("hit rate limit, sleeping until rate limit reset (%s)", resp.Rate.Reset.Format(time.RFC3339))
+		time.Sleep(time.Until(resp.Rate.Reset.Time))
 	}
 
-	go getBillableFromGithub()
-	go getRunnersFromGithub()
+	c := NewCache(client, config.Github.Organizations.Value())
+	go c.PreSeedCache()
+	repoCache, workflowCache, err := c.Start(time.Duration(config.Github.RepoRefresh)*time.Second, time.Duration(config.Github.WorkflowRefresh)*time.Second)
+	if err != nil {
+		klog.Exitf("Error: Cache start failed. %s", err.Error())
+	}
+
+	go getRunnersFromGithub(c)
 	go getRunnersOrganizationFromGithub()
-	go getWorkflowRunsFromGithub()
-	go getRunnersEnterpriseFromGithub()
+	go getWorkflowRunsFromGithub(c)
 	log.Printf("Metrics initialized")
+	return repoCache, workflowCache
 }
 
 // NewClient creates a Github Client
@@ -79,10 +98,11 @@ func NewClient() (*github.Client, error) {
 		transport  http.RoundTripper
 	)
 	if len(config.Github.Token) > 0 {
-		log.Printf("authenticating with Github Token")
+		klog.Info("Using token auth")
 		transport = oauth2.NewClient(context.Background(), oauth2.StaticTokenSource(&oauth2.Token{AccessToken: config.Github.Token})).Transport
 		httpClient = &http.Client{Transport: transport}
 	} else {
+		klog.Info("Using App auth")
 		log.Printf("authenticating with Github App")
 		tr, err := ghinstallation.NewKeyFromFile(http.DefaultTransport, config.Github.AppID, config.Github.AppInstallationID, config.Github.AppPrivateKey)
 		if err != nil {

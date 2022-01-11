@@ -23,7 +23,7 @@ var (
 )
 
 // getRunnersFromGithub - return information about runners and their status for a specific repo
-func getRunnersFromGithub() {
+func getRunnersFromGithub(cache *InMemCache) {
 	// return a commaseparated string of label values
 	runnerLabels := func(labels []*github.RunnerLabels) string {
 		labelString := ""
@@ -34,7 +34,7 @@ func getRunnersFromGithub() {
 	}
 
 	for {
-		for _, repo := range config.Github.Repositories.Value() {
+		for repo := range cache.WorkflowCache.Items() {
 			r := strings.Split(repo, "/")
 			resp, _, err := client.Actions.ListRunners(context.Background(), r[0], r[1], nil)
 			if err != nil {
