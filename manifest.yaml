@@ -13,5 +13,6 @@ telemetry:
     initialDelaySeconds: 180
 environments:
   prod:
+    replicas: 1
     clusters:
     - apps-igaming-prod-euc1
