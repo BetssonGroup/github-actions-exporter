@@ -1,0 +1,17 @@
+name: github-actions-exporter
+group: tooling
+team: tooling
+containerPort: 9999
+telemetry:
+  metrics:
+    enabled: true
+  liveness:
+    path: /metrics
+    initialDelaySeconds: 180
+  readiness:
+    path: /metrics
+    initialDelaySeconds: 180
+environments:
+  prod:
+    clusters:
+    - apps-igaming-prod-euc1
