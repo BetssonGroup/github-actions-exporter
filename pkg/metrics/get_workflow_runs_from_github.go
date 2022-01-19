@@ -20,15 +20,15 @@ func getFieldValue(repo string, run github.WorkflowRun, job github.WorkflowJob, 
 	case "id":
 		return strconv.FormatInt(*run.ID, 10)
 	case "head_branch":
-		return *run.HeadBranch
+		return run.GetHeadBranch()
 	case "run_number":
 		return strconv.Itoa(*run.RunNumber)
 	case "workflow":
 		return run.GetName()
 	case "event":
-		return *run.Event
+		return run.GetEvent()
 	case "status":
-		return *run.Status
+		return run.GetStatus()
 	case "runner_name":
 		return job.GetRunnerName()
 	case "job_name":
